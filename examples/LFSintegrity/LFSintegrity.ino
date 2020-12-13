@@ -112,8 +112,10 @@ int loopLimit = 0; // -1 continuous, otherwise # to count down to 0
 bool pauseDir = false;  // Start Pause on each off
 bool showDir =  false;  // false Start Dir on each off
 bool bDirVerify =  false;  // false Start Dir on each off
+bool bAutoFormat =  false;  // false Auto formatUnused() off
 bool bCheckFormat =  false;  // false CheckFormat
 bool bCheckUsed =  false;  // false CheckUsed
+uint32_t res = 0; // for formatUnused
 void loop() {
 	char szDir[16];
 	LoopCnt++;
@@ -130,7 +132,11 @@ void loop() {
 			else
 				sprintf( szDir, "/%lu_dir", ii );
 			chStep = fileCycle(szDir);
-			while ( chStep != fileCycle(szDir) && ( loopLimit != 0 ) ) checkInput( 0 ); // user input can 0 loopLimit
+			if ( bAutoFormat && !(lCnt % 5) ) res = myfs.formatUnused( 20, res );
+			while ( chStep != fileCycle(szDir) && ( loopLimit != 0 ) ) {
+				if ( bAutoFormat && !(lCnt % 5) ) res = myfs.formatUnused( 20, res );
+				checkInput( 0 ); // user input can 0 loopLimit
+			}
 		}
 		checkInput( 0 );
 		if ( loopLimit > 0 ) // -1 means continuous
@@ -140,7 +146,7 @@ void loop() {
 		checkInput( 1 );
 }
 
-char szInputs[] = "0123456789RdchkFqvplmusSBbyYxf+-?";
+char szInputs[] = "0123456789RdchkFqvplmusSBbyYxfa+-?";
 uint32_t lastTime;
 void checkInput( int step ) { // prompt for input without user input with step != 0
 	uint32_t nowTime = micros();
@@ -178,10 +184,10 @@ void checkInput( int step ) { // prompt for input without user input with step !
 }
 void parseCmd( char chIn ) { // pass chIn == '?' for help
 	uint32_t timeMe;
-	static uint32_t res=0;
 	switch (chIn ) {
 	case '?':
 		Serial.printf( "%s\n", " 0, 1-9 '#' passes continue loop before Pause\n\
+ 'a' Auto formatUnused() during iterations - TOGGLE\n\
  'R' Restart Teensy\n\
  'd' Directory of LittleFS\n\
  'b' big file delete\n\
@@ -299,12 +305,17 @@ void parseCmd( char chIn ) { // pass chIn == '?' for help
 		dirVerify();
 		chIn = 0;
 		break;
+	case 'a': // Auto myfs.formatUnused() during iterations
+		bAutoFormat = !bAutoFormat;
+		bAutoFormat ? Serial.print(" \nAuto formatUnused() On: ") : Serial.print(" \nAuto formatUnused() Off: ");
+		chIn = 0;
+		break;
 	case 'y': // Reclaim 1 unused format
 		lastTime = micros();
 		Serial.printf( "\n myfs.formatUnused( 1 ) ...\n" );
 		timeMe = micros();
 #ifndef RELEASE
-		res=myfs.formatUnused( 1, res );
+		res = myfs.formatUnused( 1, res );
 #endif
 		timeMe = micros() - timeMe;
 		Serial.printf( "\n\t formatUnused :: Done Formatting Low Level in %lu us (last %lu).\n", timeMe, res );
@@ -315,7 +326,7 @@ void parseCmd( char chIn ) { // pass chIn == '?' for help
 		Serial.printf( "\n myfs.formatUnused( 15 ) ...\n" );
 		timeMe = micros();
 #ifndef RELEASE
-		res= myfs.formatUnused( 15, res );
+		res = myfs.formatUnused( 15, res );
 #endif
 		timeMe = micros() - timeMe;
 		Serial.printf( "\n\t formatUnused :: Done Formatting Low Level in %lu us (last %lu).\n", timeMe, res );
@@ -499,6 +510,7 @@ uint32_t fileCycle(const char *dir) {
 			delayMicroseconds(ADDDELAY);
 			char mm = chNow + lowOffset;
 			uint32_t jj = file3.size() + 1;
+			uint32_t timeMe = micros();
 			for ( ii = 0; ii < (nNum * SUBADD + BIGADD ) && resW > 0; ii++ ) {
 				if ( 0 == ((ii + jj) / lowShift) % 2 )
 					resW = file3.write( &mm , 1 );
@@ -508,7 +520,8 @@ uint32_t fileCycle(const char *dir) {
 				// if ( lCnt%100 == 50 ) mm='x'; // GENERATE ERROR to detect on DELETE read verify
 			}
 			file3.close();
-			Serial.printf(" %s +++ Add +++ [sz %u add %u]", szDiskMem, jj - 1, ii);
+			timeMe = micros() - timeMe;
+			Serial.printf(" %s +++ Add [sz %u add %u] @KB/sec %5.2f", szDiskMem, jj - 1, ii, ii / (timeMe / 1000.0));
 			if (resW < 0) {
 				Serial.printf( "\n\twrite fail ERR# %i 0x%X \n", resW, resW );
 				parseCmd( '0' );
@@ -718,8 +731,8 @@ void bigFile2MB( int doThis ) {
 		lfs_ssize_t resW = 1;
 		char someData[2048];
 		uint32_t xx, toWrite;
-		toWrite = 2048*1000;
-		if ( toWrite > (65535+(myfs.totalSize() - myfs.usedSize()) ) ) {
+		toWrite = 2048 * 1000;
+		if ( toWrite > (65535 + (myfs.totalSize() - myfs.usedSize()) ) ) {
 			Serial.print( "Disk too full! DO :: q or F");
 			return;
 		}
